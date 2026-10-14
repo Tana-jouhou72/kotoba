@@ -27,24 +27,14 @@
     return (card.srs && card.srs[dir]) || null;
   }
 
-  /** Counts for the home screen. newLimit = how many new cards may be introduced today. */
-  function counts(cards, dir, newLimit, T = today()) {
-    let due = 0, newAvail = 0, introToday = 0;
-    for (const c of cards) {
-      if (!eligible(c, dir)) continue;
-      const s = stateOf(c, dir);
-      if (!s) { newAvail++; continue; }
-      if (s.intro === T) introToday++;
-      if (s.due <= T) due++;
-    }
-    const newToday = Math.max(0, Math.min(newAvail, newLimit - introToday));
-    return { due, newToday, newAvail, introToday };
-  }
-
-  /** Build today's study queue: due reviews first (oldest first), then new cards in book order. */
-  function buildQueue(cards, dir, newLimit, T = today()) {
-    const reviews = [], fresh = [];
-    const seen = new Set(); // never put the same word in one session twice
+  /** Today's plan for one direction.
+   *  todaySet  = the day's fixed words: those started today, topped up from the book order to `perDay`.
+   *              It stays the same all day (it only grows if you raise "words per day" in Settings).
+   *  remaining = words from todaySet not finished yet (never answered, or last answered "Again").
+   *  reviews   = older words (started on an earlier day) whose review is due today. */
+  function todayPlan(cards, dir, perDay, T = today()) {
+    const started = [], fresh = [], reviews = [];
+    const seen = new Set(); // never count the same word twice
     for (const c of cards) {
       if (!eligible(c, dir)) continue;
       const key = c.word.trim();
@@ -52,16 +42,46 @@
       seen.add(key);
       const s = stateOf(c, dir);
       if (!s) fresh.push(c);
+      else if (s.intro === T) started.push(c);
       else if (s.due <= T) reviews.push(c);
     }
-    reviews.sort((a, b) => stateOf(a, dir).due - stateOf(b, dir).due || Math.random() - 0.5);
-    fresh.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-    const { newToday } = counts(cards, dir, newLimit, T);
+    const byOrder = (a, b) => (a.order ?? 0) - (b.order ?? 0);
+    started.sort(byOrder);
+    fresh.sort(byOrder);
+    reviews.sort((a, b) => stateOf(a, dir).due - stateOf(b, dir).due);
+    const todaySet = [...started, ...fresh.slice(0, Math.max(0, perDay - started.length))];
+    const remaining = todaySet.filter((c) => { const s = stateOf(c, dir); return !s || s.due <= T; });
+    return { todaySet, remaining, reviews, newLeft: fresh.length };
+  }
+
+  /** Numbers for the home screen and the reminder notification. */
+  function counts(cards, dir, perDay, T = today()) {
+    const p = todayPlan(cards, dir, perDay, T);
     return {
-      ids: [...reviews.map((c) => c.id), ...fresh.slice(0, newToday).map((c) => c.id)],
-      reviewCount: reviews.length,
-      newCount: Math.min(newToday, fresh.length),
+      total: p.todaySet.length,
+      left: p.remaining.length,
+      done: p.todaySet.length - p.remaining.length,
+      due: p.reviews.length,
+      newLeft: p.newLeft,
     };
+  }
+
+  function shuffle(list) {
+    const a = list.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  /** The cards for a session. If today's words aren't finished: reviews + remaining words.
+   *  If everything is finished: practice mode — today's words again in random order (doesn't change the schedule). */
+  function buildQueue(cards, dir, perDay, T = today()) {
+    const p = todayPlan(cards, dir, perDay, T);
+    const study = [...p.reviews, ...p.remaining];
+    if (study.length) return { mode: 'study', ids: study.map((c) => c.id) };
+    return { mode: 'practice', ids: shuffle(p.todaySet).map((c) => c.id) };
   }
 
   /** Next interval (days) for each answer button. */
@@ -118,5 +138,5 @@
     return out;
   }
 
-  g.SRS = { DIRS, today, eligible, stateOf, counts, buildQueue, nextIntervals, grade, formatInterval, mergeCard };
+  g.SRS = { DIRS, today, eligible, stateOf, todayPlan, counts, buildQueue, nextIntervals, grade, formatInterval, mergeCard };
 })(self);

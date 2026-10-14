@@ -273,3 +273,4 @@ dialog.sheet::backdrop { background: rgba(20, 14, 8, .45); }
 .settings .row input[type="number"] { width: 90px; flex: none; }
 .settings .row input[type="time"] { width: auto; flex: none; }
 label small { display: inline; }
+.stat b small { font-size: .55em; color: var(--muted); font-weight: 500; }

@@ -1,7 +1,7 @@
 /* Service worker: offline support + daily reminder notifications */
 importScripts('db.js', 'srs.js');
 
-const CACHE = 'kotoba-v2';
+const CACHE = 'kotoba-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'srs.js', 'manifest.webmanifest', 'starter-deck.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/badge-96.png',
@@ -58,12 +58,12 @@ async function reminderText() {
     const perDay = (await KDB.getKV('newPerDay')) || 10;
     const jp = SRS.counts(cards, 'jp', perDay);
     const en = SRS.counts(cards, 'en', perDay);
-    const total = jp.due + jp.newToday + en.due + en.newToday;
+    const total = jp.left + jp.due + en.left + en.due;
     if (!cards.length) return 'Add some words to start studying.';
     if (!total) return 'Nothing due today — great job! Add a few new words from your book?';
     const parts = [];
-    if (jp.due + jp.newToday) parts.push(`日→英: ${jp.due} review, ${jp.newToday} new`);
-    if (en.due + en.newToday) parts.push(`英→日: ${en.due} review, ${en.newToday} new`);
+    if (jp.left + jp.due) parts.push(`日→英: ${jp.left + jp.due} cards`);
+    if (en.left + en.due) parts.push(`英→日: ${en.left + en.due} cards`);
     return parts.join(' · ');
   } catch {
     return 'Time for your daily Japanese words.';

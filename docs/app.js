@@ -87,11 +87,7 @@ function newCard(fields) {
 }
 const hasAI = (c) => !!(c.nuance && c.examples && c.examples.length);
 const findByWord = (w) => live().find((c) => c.word === w);
-function newLimit(dir) {
-  let extra = 0;
-  try { extra = +localStorage.getItem(`kotoba-extra-${dir}-${SRS.today()}`) || 0; } catch {}
-  return (+settings.newPerDay || 10) + extra;
-}
+const perDay = () => Math.max(1, +settings.newPerDay || 10);
 
 /* ---------- parsing your word-list format ---------- */
 function parseWordLines(text) {
@@ -408,8 +404,12 @@ function renderHome() {
   const T = SRS.today();
   const studiedToday = all.filter((c) => SRS.DIRS.some((d) => c.srs?.[d]?.t && SRS.today(c.srs[d].t) === T)).length;
   const deck = (dir, a, b) => {
-    const k = SRS.counts(all, dir, newLimit(dir));
-    const total = k.due + k.newToday;
+    const k = SRS.counts(all, dir, perDay());
+    const toStudy = k.left + k.due;
+    let action;
+    if (toStudy) action = `<a class="btn primary block" href="#/study/${dir}">${k.done ? 'Continue' : 'Start'} · ${toStudy} card${toStudy > 1 ? 's' : ''} left</a>`;
+    else if (k.total) action = `<div class="muted small">Today's words done ✓</div><a class="btn block" href="#/study/${dir}">Practice today's ${k.total} words again</a>`;
+    else action = '<span class="muted">No words left to learn — add more!</span>';
     return `
       <div class="deck">
         <div class="deck-head">
@@ -417,12 +417,10 @@ function renderHome() {
           <div class="deck-sub">${dir === 'jp' ? 'See the word, recall the meaning' : 'See the meaning, recall the word'}</div>
         </div>
         <div class="deck-stats">
-          <div class="stat due"><b>${k.due}</b><span>to review</span></div>
-          <div class="stat new"><b>${k.newToday}</b><span>new today</span></div>
+          <div class="stat new"><b>${k.done}<small>/${k.total}</small></b><span>today's words</span></div>
+          ${k.due ? `<div class="stat due"><b>${k.due}</b><span>older words to review</span></div>` : ''}
         </div>
-        ${total
-          ? `<a class="btn primary block" href="#/study/${dir}">Study ${total} card${total > 1 ? 's' : ''}</a>`
-          : `<div class="btn-row">${k.newAvail ? `<button class="btn block" data-more="${dir}">Learn ${settings.newPerDay} more new words</button>` : '<span class="muted">All done for today ✓</span>'}</div>`}
+        ${action}
       </div>`;
   };
   const missing = all.filter((c) => !hasAI(c)).length;
@@ -445,12 +443,6 @@ function renderHome() {
   $('#bulkBtn').onclick = openBulk;
   const fill = $('#fillAll');
   if (fill) fill.onclick = () => runEnrich(live().filter((c) => !hasAI(c)));
-  $$('[data-more]').forEach((b) => (b.onclick = () => {
-    const dir = b.dataset.more;
-    const key = `kotoba-extra-${dir}-${SRS.today()}`;
-    try { localStorage.setItem(key, (+localStorage.getItem(key) || 0) + (+settings.newPerDay || 10)); } catch {}
-    location.hash = `#/study/${dir}`;
-  }));
 }
 function greeting() {
   const h = new Date().getHours();
@@ -460,8 +452,8 @@ function greeting() {
 /* Study session */
 function startOrRenderSession(dir) {
   if (!session || session.dir !== dir) {
-    const q = SRS.buildQueue(live(), dir, newLimit(dir));
-    session = { dir, queue: q.ids, pos: 0, revealed: false, total: q.ids.length, reviewed: 0, again: 0, hint: 0 };
+    const q = SRS.buildQueue(live(), dir, perDay());
+    session = { dir, mode: q.mode, queue: q.ids, pos: 0, revealed: false, total: q.ids.length, reviewed: 0, again: 0, hint: 0 };
   }
   renderSession();
 }
@@ -500,11 +492,15 @@ function renderSession() {
         <div class="session-count">${remaining} left</div>
       </div>
       <div class="flash" id="flash">
-        <span class="tag ${isNew ? 'new' : ''}">${isNew ? 'New' : 'Review'} · ${s.dir === 'jp' ? '日→英' : '英→日'}</span>
+        <span class="tag ${isNew ? 'new' : ''}">${s.mode === 'practice' ? 'Practice' : isNew ? 'New' : SRS.stateOf(c, s.dir).intro === SRS.today() ? 'Today' : 'Review'} · ${s.dir === 'jp' ? '日→英' : '英→日'}</span>
         ${s.revealed ? detailHTML(c) : `<div class="front">${front}<div class="tap-hint">Tap to show answer</div></div>`}
       </div>
       <div class="actions">
-        ${s.revealed ? `
+        ${s.revealed && s.mode === 'practice' ? `
+          <div class="grades" style="grid-template-columns:1fr 1fr">
+            <button class="grade again" data-g="again">Again<small>see it later <span class="kbd">· 1</span></small></button>
+            <button class="grade good" data-g="good">Got it<small>next <span class="kbd">· 3</span></small></button>
+          </div>` : s.revealed ? `
           <div class="grades">
             <button class="grade again" data-g="again">Again<small>now <span class="kbd">· 1</span></small></button>
             <button class="grade hard" data-g="hard">Hard<small>${SRS.formatInterval(ivls.hard)} <span class="kbd">· 2</span></small></button>
@@ -538,8 +534,10 @@ async function answer(g) {
   const s = session;
   const c = currentCard();
   if (!s || !c || !s.revealed) return;
-  const updated = { ...c, srs: { ...(c.srs || {}), [s.dir]: SRS.grade(SRS.stateOf(c, s.dir), g) } };
-  await saveCards([updated], { sync: false });
+  if (s.mode !== 'practice') { // practice rounds never change the schedule
+    const updated = { ...c, srs: { ...(c.srs || {}), [s.dir]: SRS.grade(SRS.stateOf(c, s.dir), g) } };
+    await saveCards([updated], { sync: false });
+  }
   s.reviewed++;
   if (g === 'again') {
     s.again++;
@@ -554,25 +552,21 @@ async function answer(g) {
 }
 function renderDone() {
   const s = session;
-  const k = SRS.counts(live(), s.dir, newLimit(s.dir));
+  const k = SRS.counts(live(), s.dir, perDay());
+  const canPractice = k.total && !k.left && !k.due;
   view().innerHTML = `
     <div class="done">
       <div class="big" lang="ja">お疲れさま！</div>
-      <p class="muted">${s.reviewed ? `You answered ${s.reviewed} card${s.reviewed > 1 ? 's' : ''} (${s.again} “Again”).` : 'Nothing due right now.'}</p>
+      <p class="muted">${!s.reviewed ? 'No words for today.' : s.mode === 'practice' ? `Practice round done (${s.again} “Again”).` : `Today's words are done. You answered ${s.reviewed} card${s.reviewed > 1 ? 's' : ''} (${s.again} “Again”).`}</p>
+      <p class="muted small">Tomorrow you'll get ${perDay()} new words. Change the number in Settings.</p>
       <div class="btn-row" style="justify-content:center;margin-top:18px">
-        ${k.newAvail ? `<button class="btn" id="moreBtn">Learn ${settings.newPerDay} more new words</button>` : ''}
+        ${canPractice ? `<button class="btn" id="practiceBtn">Practice today's ${k.total} words again</button>` : ''}
         <button class="btn primary" id="homeBtn">Back home</button>
       </div>
     </div>`;
   $('#homeBtn').onclick = () => endSession(true);
-  const more = $('#moreBtn');
-  if (more) more.onclick = () => {
-    const dir = s.dir;
-    const key = `kotoba-extra-${dir}-${SRS.today()}`;
-    try { localStorage.setItem(key, (+localStorage.getItem(key) || 0) + (+settings.newPerDay || 10)); } catch {}
-    session = null;
-    startOrRenderSession(dir);
-  };
+  const pr = $('#practiceBtn');
+  if (pr) pr.onclick = () => { const dir = s.dir; session = null; startOrRenderSession(dir); };
   scheduleSync(800);
 }
 
