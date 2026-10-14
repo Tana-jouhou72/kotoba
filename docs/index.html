@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Kotoba</title>
+  <meta name="description" content="Daily Japanese vocabulary with spaced repetition." />
+  <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#16130f" media="(prefers-color-scheme: dark)" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand" aria-label="Home"><span class="brand-mark">言</span><span class="brand-name">Kotoba</span></a>
+    <button class="sync-dot" id="syncDot" title="Sync" aria-label="Sync now" data-state="off"></button>
+  </header>
+
+  <main id="view" class="view" tabindex="-1"></main>
+
+  <nav class="tabbar" aria-label="Main">
+    <a href="#/" data-tab="home"><span class="tab-ico">学</span><span>Study</span></a>
+    <a href="#/words" data-tab="words"><span class="tab-ico">語</span><span>Words</span></a>
+    <a href="#/settings" data-tab="settings"><span class="tab-ico">設</span><span>Settings</span></a>
+  </nav>
+
+  <!-- Edit / add word -->
+  <dialog id="editDialog" class="sheet">
+    <form method="dialog" id="editForm" class="sheet-body">
+      <h2 id="editTitle">Edit word</h2>
+      <div class="grid2">
+        <label>Word<input name="word" required autocomplete="off" lang="ja" /></label>
+        <label>Reading<input name="reading" autocomplete="off" lang="ja" placeholder="ひらがな" /></label>
+      </div>
+      <label>Meaning<input name="meaning" autocomplete="off" /></label>
+      <label>My note <small>(from the book)</small><input name="note" autocomplete="off" /></label>
+      <label>Nuance<textarea name="nuance" rows="3"></textarea></label>
+      <fieldset>
+        <legend>Example 1</legend>
+        <input name="ex1ja" lang="ja" placeholder="日本語の例文" autocomplete="off" />
+        <input name="ex1en" placeholder="English translation" autocomplete="off" />
+      </fieldset>
+      <fieldset>
+        <legend>Example 2</legend>
+        <input name="ex2ja" lang="ja" placeholder="日本語の例文" autocomplete="off" />
+        <input name="ex2en" placeholder="English translation" autocomplete="off" />
+      </fieldset>
+      <div class="sheet-actions">
+        <button type="button" class="btn ghost" id="editAI">✦ Fill with AI</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn danger-ghost" id="editDelete">Delete</button>
+        <button type="button" class="btn ghost" id="editCancel">Cancel</button>
+        <button type="submit" class="btn primary" id="editSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Bulk add -->
+  <dialog id="bulkDialog" class="sheet">
+    <form method="dialog" id="bulkForm" class="sheet-body">
+      <h2>Add many words</h2>
+      <p class="muted small">One word per line, same format as your notes: <code>word　reading　meaning</code>. Reading and meaning are optional.</p>
+      <textarea name="text" rows="10" lang="ja" placeholder="涙　なみだ　tear&#10;沈む　しずむ　sink&#10;旅館"></textarea>
+      <label class="check"><input type="checkbox" name="ai" checked /> Fill in reading, nuance &amp; examples with AI after adding</label>
+      <div class="sheet-actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="bulkCancel">Cancel</button>
+        <button type="submit" class="btn primary">Add words</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <input type="file" id="fileInput" accept=".json,.txt,application/json,text/plain" hidden />
+
+  <script src="db.js"></script>
+  <script src="srs.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
