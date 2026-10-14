@@ -44,8 +44,12 @@
   /** Build today's study queue: due reviews first (oldest first), then new cards in book order. */
   function buildQueue(cards, dir, newLimit, T = today()) {
     const reviews = [], fresh = [];
+    const seen = new Set(); // never put the same word in one session twice
     for (const c of cards) {
       if (!eligible(c, dir)) continue;
+      const key = c.word.trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
       const s = stateOf(c, dir);
       if (!s) fresh.push(c);
       else if (s.due <= T) reviews.push(c);

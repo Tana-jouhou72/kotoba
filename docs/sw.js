@@ -1,7 +1,7 @@
 /* Service worker: offline support + daily reminder notifications */
 importScripts('db.js', 'srs.js');
 
-const CACHE = 'kotoba-v1';
+const CACHE = 'kotoba-v2';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'db.js', 'srs.js', 'manifest.webmanifest', 'starter-deck.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/badge-96.png',

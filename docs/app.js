@@ -47,6 +47,36 @@ async function saveCards(list, { sync = true } = {}) {
   }
   if (sync) scheduleSync();
 }
+/* Merge duplicate words (e.g. the starter deck loaded on two devices).
+   The keeper is chosen the same way on every device (smallest id), so devices never delete each other's copy. */
+async function dedupeWords() {
+  const groups = new Map();
+  for (const c of cards) {
+    if (c.deleted || !c.word) continue;
+    const k = c.word.trim();
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(c);
+  }
+  const changed = [];
+  const now = Date.now();
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const [keep, ...dups] = list;
+    const merged = { ...keep, srs: { ...(keep.srs || {}) } };
+    for (const d of dups) {
+      for (const dir of SRS.DIRS) {
+        const s = d.srs && d.srs[dir];
+        const k = merged.srs[dir];
+        if (s && (!k || (s.t || 0) > (k.t || 0))) merged.srs[dir] = s; // keep the most recent study progress
+      }
+      changed.push({ ...d, deleted: true, updatedAt: now });
+    }
+    if (JSON.stringify(merged) !== JSON.stringify(keep)) changed.push(merged);
+  }
+  if (changed.length) await saveCards(changed);
+  return changed.length;
+}
 function nextOrder() { return cards.reduce((m, c) => Math.max(m, c.order ?? 0), 0) + 1; }
 function newCard(fields) {
   return {
@@ -103,6 +133,7 @@ async function importCards(incoming) {
     }
   }
   await saveCards(toSave);
+  await dedupeWords();
   return { added, updated };
 }
 
@@ -190,11 +221,13 @@ async function syncNow(quiet = false) {
       if (!loc || JSON.stringify(mc) !== JSON.stringify(loc)) changed.push(mc);
     }
     if (changed.length) await saveCards(changed, { sync: false });
+    const deduped = await dedupeWords();
+    if (deduped) scheduleSync(1500);
     settings.lastSync = Date.now();
     saveSettings();
     setSyncState('ok');
     if (!quiet) toast('Synced');
-    if (changed.length && !session) render();
+    if ((changed.length || deduped) && !session) render();
   } catch (e) {
     setSyncState('err');
     if (!quiet) toast(e.message, 'err');
@@ -769,8 +802,7 @@ function initEditor() {
     const fields = formToFields();
     if (!fields.word) return;
     if (!editing) {
-      const dup = findByWord(fields.word);
-      if (dup && !confirm(`“${fields.word}” is already in your list. Add it again anyway?`)) return;
+      if (findByWord(fields.word)) return toast(`“${fields.word}” is already in your list.`, 'err');
       const c = newCard({ ...fields, meaning: fields.meaning || fields.note });
       await saveCards([c]);
       dlg.close();
@@ -899,7 +931,7 @@ document.addEventListener('visibilitychange', () => {
   applyTheme();
   initEditor();
   initBulk();
-  try { await reload(); } catch (e) { toast('Could not open local storage: ' + e.message, 'err'); }
+  try { await reload(); await dedupeWords(); } catch (e) { toast('Could not open local storage: ' + e.message, 'err'); }
   KDB.setKV('newPerDay', settings.newPerDay).catch(() => {});
   setSyncState(settings.workerUrl ? (settings.lastSync ? 'ok' : 'off') : 'off');
   render();
