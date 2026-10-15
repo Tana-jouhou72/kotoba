@@ -18,7 +18,7 @@ const ICON = {
 
 /* ---------- settings (per device) ---------- */
 const SETTINGS_KEY = 'kotoba-settings';
-const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', lastSync: 0 };
+const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', english: 'show', lastSync: 0 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -85,7 +85,31 @@ function newCard(fields) {
     srs: { jp: null, en: null }, ...fields,
   };
 }
-const hasAI = (c) => !!(c.nuance && c.examples && c.examples.length);
+const hasEnglishAI = (c) => !!(c.nuance && c.examples && c.examples.length);
+const hasAI = (c) => hasEnglishAI(c) && !!c.meaningJa;
+
+/* Add the Japanese 意味/ニュアンス to existing cards from the starter deck (cards made before this feature). */
+let starterJa = null;
+async function addJapaneseFromStarter() {
+  if (!cards.some((c) => !c.deleted && !c.meaningJa)) return 0;
+  try {
+    if (!starterJa) {
+      const res = await fetch('starter-deck.json');
+      if (!res.ok) return 0;
+      const data = await res.json();
+      starterJa = new Map((data.cards || []).filter((c) => c.meaningJa).map((c) => [c.word, c]));
+    }
+  } catch { return 0; }
+  const now = Date.now();
+  const upd = [];
+  for (const c of cards) {
+    if (c.deleted || c.meaningJa) continue;
+    const s = starterJa.get(c.word);
+    if (s) upd.push({ ...c, meaningJa: s.meaningJa, nuanceJa: c.nuanceJa || s.nuanceJa || '', updatedAt: now });
+  }
+  if (upd.length) await saveCards(upd);
+  return upd.length;
+}
 const findByWord = (w) => live().find((c) => c.word === w);
 const perDay = () => Math.max(1, +settings.newPerDay || 10);
 
@@ -217,7 +241,7 @@ async function syncNow(quiet = false) {
       if (!loc || JSON.stringify(mc) !== JSON.stringify(loc)) changed.push(mc);
     }
     if (changed.length) await saveCards(changed, { sync: false });
-    const deduped = await dedupeWords();
+    const deduped = (await dedupeWords()) + (await addJapaneseFromStarter());
     if (deduped) scheduleSync(1500);
     settings.lastSync = Date.now();
     saveSettings();
@@ -244,16 +268,22 @@ async function enrichBatch(batch) {
   batch.forEach((c, i) => {
     const r = (results || []).find((x) => x && x.word === c.word) || (results || [])[i];
     if (!r) return;
+    const had = hasEnglishAI(c); // keep existing English content; only add what is missing
     updated.push({
       ...c,
       reading: c.reading || r.reading || '',
-      meaning: r.meaning || c.meaning,
-      nuance: r.nuance || c.nuance,
-      examples: Array.isArray(r.examples) && r.examples.length ? r.examples.slice(0, 2) : c.examples,
+      meaning: had ? c.meaning || r.meaning : r.meaning || c.meaning,
+      meaningJa: c.meaningJa || r.meaningJa || '',
+      nuance: had ? c.nuance : r.nuance || c.nuance,
+      nuanceJa: c.nuanceJa || r.nuanceJa || '',
+      examples: had ? c.examples : Array.isArray(r.examples) && r.examples.length ? r.examples.slice(0, 2) : c.examples,
       updatedAt: now,
     });
   });
   await saveCards(updated);
+  if (updated.length && !updated.some((c) => c.meaningJa)) {
+    throw new Error('Your Worker is the old version, so no Japanese explanations came back. Paste the new worker code in Cloudflare.');
+  }
   return updated;
 }
 async function runEnrich(list) {
@@ -272,7 +302,7 @@ async function runEnrich(list) {
       if (!session) render();
       if (i + size < list.length) await sleep(4500); // stay under free-tier per-minute limits
     }
-    toast(`✦ Done — ${done} words filled in`);
+    toast(`✦ Done — ${done} word${done === 1 ? "" : "s"} filled in`);
   } catch (e) {
     toast(`AI stopped after ${done}: ${e.message}`, 'err');
   } finally {
@@ -335,8 +365,11 @@ function detailHTML(c) {
   const showReading = c.reading && c.reading !== c.word;
   const noteDiffers = c.note && c.note.trim() && c.note.trim().toLowerCase() !== (c.meaning || '').trim().toLowerCase();
   const ex = (c.examples || []).filter((e) => e && e.ja);
+  const ja = !!c.meaningJa; // English can only be hidden when there is a Japanese explanation to read instead
+  const hideEn = ja && settings.english === 'tap';
+  const en = ja ? 'en-text' : '';
   return `
-    <div class="answer">
+    <div class="answer ${hideEn ? 'en-hidden' : ''}">
       <div>
         <div class="head">
           <span class="word" lang="ja">${esc(c.word)}</span>
@@ -346,16 +379,21 @@ function detailHTML(c) {
         </div>
         ${showReading ? `<div class="reading" lang="ja">${esc(c.reading)}</div>` : ''}
       </div>
-      ${c.meaning ? `<div class="meaning">${esc(c.meaning)}</div>` : ''}
-      ${noteDiffers ? `<div class="note">My note: ${esc(c.note)}</div>` : ''}
-      ${c.nuance ? `<div class="nuance"><h4>Nuance</h4><p>${esc(c.nuance)}</p></div>` : ''}
-      ${ex.length ? `<div><h4>Examples</h4><ol class="examples">${ex.map((e) => `
+      ${ja ? `<div class="sec"><h4>意味</h4><p class="ja-text" lang="ja">${esc(c.meaningJa)}</p>
+        ${c.meaning ? `<p class="en-line ${en}"><span class="en-tag">EN</span>${esc(c.meaning)}</p>` : ''}</div>`
+        : c.meaning ? `<div class="meaning">${esc(c.meaning)}</div>` : ''}
+      ${noteDiffers ? `<div class="note ${en}">My note: ${esc(c.note)}</div>` : ''}
+      ${c.nuanceJa || c.nuance ? `<div class="sec"><h4>${ja ? 'ニュアンス・使い方' : 'Nuance'}</h4>
+        ${c.nuanceJa ? `<p class="ja-text" lang="ja">${esc(c.nuanceJa)}</p>` : ''}
+        ${c.nuance ? `<p class="${c.nuanceJa ? `en-line ${en}` : ''}">${c.nuanceJa ? '<span class="en-tag">EN</span>' : ''}${esc(c.nuance)}</p>` : ''}</div>` : ''}
+      ${ex.length ? `<div class="sec"><h4>${ja ? '例文' : 'Examples'}</h4><ol class="examples">${ex.map((e) => `
         <li>
           <div class="ja-line"><p lang="ja">${highlight(e.ja, c.word)}</p>
             <button class="icon-btn" data-speak="${esc(e.ja)}" aria-label="Play example">${ICON.speak}</button></div>
-          ${e.en ? `<p class="en">${esc(e.en)}</p>` : ''}
+          ${e.en ? `<p class="en ${en}">${esc(e.en)}</p>` : ''}
         </li>`).join('')}</ol></div>` : ''}
-      ${!hasAI(c) ? `<div class="missing"><span>No nuance or examples yet.</span>
+      ${ja ? `<button class="link en-toggle" data-en-toggle>${hideEn ? 'Show English' : 'Hide English'}</button>` : ''}
+      ${!hasAI(c) ? `<div class="missing"><span>${hasEnglishAI(c) ? 'No Japanese explanation yet.' : 'No nuance or examples yet.'}</span>
         <button class="btn sm" data-ai="${esc(c.id)}">✦ Fill with AI</button></div>` : ''}
     </div>`;
 }
@@ -433,7 +471,7 @@ function renderHome() {
       ${deck('jp', '日本語', 'English')}
       ${deck('en', 'English', '日本語')}
     </div>
-    ${missing && settings.workerUrl ? `<div class="panel"><h2>${missing} words need nuance &amp; examples</h2><p class="muted small">AI can fill in the reading, nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
+    ${missing && settings.workerUrl ? `<div class="panel"><h2>${missing} words need explanations</h2><p class="muted small">AI can fill in the Japanese 意味 &amp; ニュアンス, English nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
     ${!settings.workerUrl ? `<div class="panel"><h2>Finish setup</h2><p class="muted small">Connect your free server to get daily notifications, AI examples, and sync between your phone and PC.</p><a class="btn" href="#/settings">Open settings</a></div>` : ''}
     <div class="home-foot">
       <button class="btn" id="addBtn">＋ Add word</button>
@@ -574,7 +612,7 @@ function renderDone() {
 let wordFilter = '';
 let wordLimit = 200;
 function statusChip(c) {
-  if (!hasAI(c)) return '<span class="chip noai">no examples</span>';
+  if (!hasAI(c)) return '<span class="chip noai">needs AI</span>';
   const s = SRS.stateOf(c, 'jp');
   if (!s) return '<span class="chip new">new</span>';
   const d = s.due - SRS.today();
@@ -584,7 +622,7 @@ function statusChip(c) {
 function renderWords() {
   const q = wordFilter.trim().toLowerCase();
   const all = live().sort((a, b) => (b.order ?? 0) - (a.order ?? 0));
-  const list = q ? all.filter((c) => [c.word, c.reading, c.meaning, c.note].some((v) => (v || '').toLowerCase().includes(q))) : all;
+  const list = q ? all.filter((c) => [c.word, c.reading, c.meaning, c.meaningJa, c.note].some((v) => (v || '').toLowerCase().includes(q))) : all;
   const missing = all.filter((c) => !hasAI(c));
   view().innerHTML = `
     <div class="words-head">
@@ -640,6 +678,13 @@ function renderSettings() {
             ${['auto', 'light', 'dark'].map((t) => `<option value="${t}" ${settings.theme === t ? 'selected' : ''}>${t[0].toUpperCase() + t.slice(1)}</option>`).join('')}
           </select>
         </div>
+        <div class="row">
+          <div class="lbl">English on the answer card<small>The Japanese 意味 and ニュアンス always come first.</small></div>
+          <select id="english">
+            <option value="show" ${settings.english !== 'tap' ? 'selected' : ''}>Show</option>
+            <option value="tap" ${settings.english === 'tap' ? 'selected' : ''}>Hide until tapped</option>
+          </select>
+        </div>
       </div>
 
       <h2>Server (Cloudflare Worker)</h2>
@@ -687,6 +732,7 @@ function renderSettings() {
 
   $('#newPerDay').onchange = (e) => { settings.newPerDay = Math.max(1, Math.min(100, +e.target.value || 10)); saveSettings(); };
   $('#theme').onchange = (e) => { settings.theme = e.target.value; saveSettings(); applyTheme(); };
+  $('#english').onchange = (e) => { settings.english = e.target.value; saveSettings(); };
   $('#saveServer').onclick = async () => {
     settings.workerUrl = $('#workerUrl').value.trim().replace(/\/+$/, '');
     settings.password = $('#password').value;
@@ -768,8 +814,10 @@ function openEditor(card) {
   $('#editTitle').textContent = card ? 'Edit word' : 'Add word';
   f.word.value = c.word || '';
   f.reading.value = c.reading || '';
+  f.meaningJa.value = c.meaningJa || '';
   f.meaning.value = c.meaning || '';
   f.note.value = c.note || '';
+  f.nuanceJa.value = c.nuanceJa || '';
   f.nuance.value = c.nuance || '';
   f.ex1ja.value = ex[0]?.ja || ''; f.ex1en.value = ex[0]?.en || '';
   f.ex2ja.value = ex[1]?.ja || ''; f.ex2en.value = ex[1]?.en || '';
@@ -785,8 +833,9 @@ function formToFields() {
     .map(([ja, en]) => ({ ja: ja.trim(), en: en.trim() }))
     .filter((e) => e.ja);
   return {
-    word: f.word.value.trim(), reading: f.reading.value.trim(), meaning: f.meaning.value.trim(),
-    note: f.note.value.trim(), nuance: f.nuance.value.trim(), examples,
+    word: f.word.value.trim(), reading: f.reading.value.trim(),
+    meaningJa: f.meaningJa.value.trim(), meaning: f.meaning.value.trim(),
+    note: f.note.value.trim(), nuanceJa: f.nuanceJa.value.trim(), nuance: f.nuance.value.trim(), examples,
   };
 }
 function initEditor() {
@@ -832,7 +881,9 @@ function initEditor() {
       if (!r) throw new Error('The AI returned nothing. Try again.');
       const f = $('#editForm');
       if (!f.reading.value) f.reading.value = r.reading || '';
+      f.meaningJa.value = r.meaningJa || f.meaningJa.value;
       f.meaning.value = r.meaning || f.meaning.value;
+      f.nuanceJa.value = r.nuanceJa || f.nuanceJa.value;
       f.nuance.value = r.nuance || '';
       const ex = r.examples || [];
       f.ex1ja.value = ex[0]?.ja || ''; f.ex1en.value = ex[0]?.en || '';
@@ -878,6 +929,14 @@ function initBulk() {
 document.addEventListener('click', (e) => {
   const sp = e.target.closest('[data-speak]');
   if (sp) { e.stopPropagation(); speak(sp.dataset.speak); return; }
+  const et = e.target.closest('[data-en-toggle]');
+  if (et) {
+    e.stopPropagation();
+    const box = et.closest('.answer');
+    box.classList.toggle('en-hidden');
+    et.textContent = box.classList.contains('en-hidden') ? 'Show English' : 'Hide English';
+    return;
+  }
   const ed = e.target.closest('[data-edit]');
   if (ed) { e.stopPropagation(); openEditor(cards.find((c) => c.id === ed.dataset.edit)); return; }
   const ai = e.target.closest('[data-ai]');
@@ -925,7 +984,7 @@ document.addEventListener('visibilitychange', () => {
   applyTheme();
   initEditor();
   initBulk();
-  try { await reload(); await dedupeWords(); } catch (e) { toast('Could not open local storage: ' + e.message, 'err'); }
+  try { await reload(); await dedupeWords(); await addJapaneseFromStarter(); } catch (e) { toast('Could not open local storage: ' + e.message, 'err'); }
   KDB.setKV('newPerDay', settings.newPerDay).catch(() => {});
   setSyncState(settings.workerUrl ? (settings.lastSync ? 'ok' : 'off') : 'off');
   render();

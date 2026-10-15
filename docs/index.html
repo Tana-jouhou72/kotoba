@@ -37,9 +37,11 @@
         <label>Word<input name="word" required autocomplete="off" lang="ja" /></label>
         <label>Reading<input name="reading" autocomplete="off" lang="ja" placeholder="ひらがな" /></label>
       </div>
-      <label>Meaning<input name="meaning" autocomplete="off" /></label>
+      <label>意味 <small>(Japanese definition)</small><textarea name="meaningJa" rows="2" lang="ja"></textarea></label>
+      <label>Meaning <small>(English)</small><input name="meaning" autocomplete="off" /></label>
       <label>My note <small>(from the book)</small><input name="note" autocomplete="off" /></label>
-      <label>Nuance<textarea name="nuance" rows="3"></textarea></label>
+      <label>ニュアンス・使い方 <small>(Japanese)</small><textarea name="nuanceJa" rows="3" lang="ja"></textarea></label>
+      <label>Nuance <small>(English)</small><textarea name="nuance" rows="3"></textarea></label>
       <fieldset>
         <legend>Example 1</legend>
         <input name="ex1ja" lang="ja" placeholder="日本語の例文" autocomplete="off" />
