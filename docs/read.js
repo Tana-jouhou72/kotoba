@@ -73,6 +73,10 @@ function renderLessonSettings(box) {
         <div class="lbl">Time</div>
         <input type="time" id="lsTime" value="${esc(cfg.time)}" />
       </div>
+      <div class="row">
+        <div class="lbl">Your Japanese level<small>Used for reading lessons and AI word examples.</small></div>
+        <select id="lsLevel">${['N3', 'N2', 'N1'].map((l) => `<option value="${l}" ${cfg.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
       <div class="stack">
         <div class="btn-row"><button class="btn primary" id="lsSave">Save schedule</button></div>
         <span class="muted small">The notification goes to every device where the daily reminder is turned on.</span>
@@ -88,6 +92,7 @@ function renderLessonSettings(box) {
           enabled: $('#lsOn', box).checked,
           days,
           time: $('#lsTime', box).value || '20:00',
+          level: $('#lsLevel', box).value,
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
         });
         lessonCfg = r.settings;
@@ -141,7 +146,7 @@ async function generateNow() {
   const btn = $('#genNow');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Writing… (up to a minute)';
+  btn.innerHTML = '<span class="spinner"></span> Writing… (can take 1–2 min)';
   try {
     const { lesson } = await api('/lesson/generate', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo' });
     try { await KDB.setKV('lesson:' + lesson.id, lesson); } catch {}
@@ -186,7 +191,7 @@ async function renderLesson(id) {
       <div class="lesson-nav">
         <a class="icon-btn" href="#/read" aria-label="All lessons">${ICON.back}</a>
         <span class="chip">${esc(lesson.formatLabel)}</span>
-        <span class="muted small">${esc(lesson.date)} · 約15分</span>
+        <span class="muted small">${esc(lesson.date)}${lesson.level ? ' · ' + esc(lesson.level) : ''} · 約15分</span>
       </div>
       <h1 class="lesson-title" lang="ja">${esc(lesson.title)}</h1>
       <p class="muted lesson-sub">${esc(lesson.titleEn)}</p>
