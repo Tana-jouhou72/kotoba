@@ -320,13 +320,15 @@ function pickVoice() {
   jaVoice = voices.find((v) => /ja[-_]JP/i.test(v.lang) && /google|kyoko|o-ren|nanami|haruka/i.test(v.name)) || voices.find((v) => /^ja/i.test(v.lang)) || null;
 }
 if ('speechSynthesis' in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
-function speak(text) {
+function speak(text, { pitch = 1, onend = null, keep = false } = {}) {
   if (!('speechSynthesis' in window)) return toast('Speech is not supported in this browser.', 'err');
-  speechSynthesis.cancel();
+  if (!keep) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'ja-JP';
   if (jaVoice) u.voice = jaVoice;
   u.rate = 0.95;
+  u.pitch = pitch;
+  if (onend) { u.onend = onend; u.onerror = onend; }
   speechSynthesis.speak(u);
 }
 
@@ -413,6 +415,8 @@ function render() {
   document.body.classList.toggle('in-session', r.name === 'study');
   $$('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === (r.name === 'study' ? 'home' : r.name)));
   if (r.name !== 'study' && session) endSession(false);
+  if (r.name !== 'read' && typeof stopReading === 'function') stopReading();
+  if (r.name === 'read') return renderRead(r.arg);
   if (r.name === 'words') return renderWords();
   if (r.name === 'settings') return renderSettings();
   if (r.name === 'study') return startOrRenderSession(r.arg === 'en' ? 'en' : 'jp');
@@ -716,6 +720,9 @@ function renderSettings() {
         </div>` : `<div class="stack"><span class="muted small">This browser doesn't support push notifications. Use Chrome or Edge, and install the app to your home screen.</span></div>`}
       </div>
 
+      <h2>Daily reading lesson</h2>
+      <div class="card-group" id="lessonSettings"></div>
+
       <h2>Data &amp; backup</h2>
       <div class="card-group">
         <div class="stack">
@@ -758,6 +765,7 @@ function renderSettings() {
   if (off) off.onclick = async () => { try { await disablePush(); toast('Reminder turned off'); } catch (e) { toast(e.message, 'err'); } renderSettings(); };
   const test = $('#pushTest');
   if (test) test.onclick = async () => { try { await testPush(); toast('Test sent — it should arrive in a few seconds'); } catch (e) { toast(e.message, 'err'); } };
+  renderLessonSettings($('#lessonSettings'));
   $('#exportBtn').onclick = exportBackup;
   $('#importBtn').onclick = () => $('#fileInput').click();
   $('#starterBtn').onclick = () => loadStarter().catch((e) => toast(e.message, 'err'));

@@ -1,9 +1,9 @@
 /* Service worker: offline support + daily reminder notifications */
 importScripts('db.js', 'srs.js');
 
-const CACHE = 'kotoba-v4';
+const CACHE = 'kotoba-v5';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'db.js', 'srs.js', 'manifest.webmanifest', 'starter-deck.json',
+  './', 'index.html', 'styles.css', 'app.js', 'read.js', 'db.js', 'srs.js', 'manifest.webmanifest', 'starter-deck.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/badge-96.png',
 ];
 
@@ -72,20 +72,17 @@ async function reminderText() {
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
-    let title = '言葉 — time to study';
-    let body = await reminderText();
-    try {
-      const data = event.data && event.data.json();
-      if (data && data.title) title = data.title;
-      if (data && data.body) body = data.body;
-    } catch { /* push without payload */ }
+    let data = null;
+    try { data = event.data && event.data.json(); } catch { /* push without payload */ }
+    const title = (data && data.title) || '言葉 — time to study';
+    const body = (data && data.body) || (await reminderText());
     await self.registration.showNotification(title, {
       body,
       icon: 'icons/icon-192.png',
       badge: 'icons/badge-96.png',
-      tag: 'kotoba-daily',
+      tag: (data && data.tag) || 'kotoba-daily',
       renotify: true,
-      data: { url: './' },
+      data: { url: (data && data.url) || './' },
     });
   })());
 });
@@ -96,7 +93,11 @@ self.addEventListener('notificationclick', (event) => {
     const target = new URL(event.notification.data?.url || './', self.registration.scope).href;
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {
-      if (w.url.startsWith(self.registration.scope)) { await w.focus(); return; }
+      if (w.url.startsWith(self.registration.scope)) {
+        await w.focus();
+        w.postMessage({ type: 'open', url: target }); // the open app jumps to the lesson
+        return;
+      }
     }
     await self.clients.openWindow(target);
   })());
