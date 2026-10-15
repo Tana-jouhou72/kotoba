@@ -141,7 +141,7 @@ async function generateNow() {
   const btn = $('#genNow');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Writing… (about 30 s)';
+  btn.innerHTML = '<span class="spinner"></span> Writing… (up to a minute)';
   try {
     const { lesson } = await api('/lesson/generate', { tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo' });
     try { await KDB.setKV('lesson:' + lesson.id, lesson); } catch {}
