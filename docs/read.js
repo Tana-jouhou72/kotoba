@@ -49,6 +49,7 @@ function scheduleText(cfg) {
 async function loadLessonCfg() {
   const r = await api('/lesson/settings');
   lessonCfg = r.settings;
+  if (lessonCfg.lang && lessonCfg.lang !== settings.transLang) { settings.transLang = lessonCfg.lang; saveSettings(); }
   return lessonCfg;
 }
 
@@ -77,6 +78,13 @@ function renderLessonSettings(box) {
         <div class="lbl">Your Japanese level<small>Used for reading lessons and AI word examples.</small></div>
         <select id="lsLevel">${['N3', 'N2', 'N1'].map((l) => `<option value="${l}" ${cfg.level === l ? 'selected' : ''}>${l}</option>`).join('')}</select>
       </div>
+      <div class="row">
+        <div class="lbl">Translation language<small>For meanings, nuance, example translations and lessons written by AI.</small></div>
+        <select id="lsLang">
+          <option value="en" ${cfg.lang !== 'km' ? 'selected' : ''}>English</option>
+          <option value="km" ${cfg.lang === 'km' ? 'selected' : ''}>ខ្មែរ (Khmer)</option>
+        </select>
+      </div>
       <div class="stack">
         <div class="btn-row"><button class="btn primary" id="lsSave">Save schedule</button></div>
         <span class="muted small">The notification goes to every device where the daily reminder is turned on.</span>
@@ -93,9 +101,12 @@ function renderLessonSettings(box) {
           days,
           time: $('#lsTime', box).value || '20:00',
           level: $('#lsLevel', box).value,
+          lang: $('#lsLang', box).value,
           tz: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Tokyo',
         });
         lessonCfg = r.settings;
+        settings.transLang = lessonCfg.lang || 'en';
+        saveSettings();
         toast(lessonCfg.enabled ? `Saved — ${scheduleText(lessonCfg)}` : 'Saved — daily lessons are off');
       } catch (e) { toast(oldWorkerMsg(e), 'err'); }
     };
@@ -194,10 +205,10 @@ async function renderLesson(id) {
         <span class="muted small">${esc(lesson.date)}${lesson.level ? ' · ' + esc(lesson.level) : ''} · 約15分</span>
       </div>
       <h1 class="lesson-title" lang="ja">${esc(lesson.title)}</h1>
-      <p class="muted lesson-sub">${esc(lesson.titleEn)}</p>
+      <p class="muted lesson-sub" ${trAttr()}>${esc(lesson.titleEn)}</p>
       <div class="setting-box">
         <p lang="ja">${esc(lesson.setting)}</p>
-        <p class="en-text muted small">${esc(lesson.settingEn)}</p>
+        <p class="en-text muted small" ${trAttr()}>${esc(lesson.settingEn)}</p>
       </div>
 
       <section>
@@ -211,9 +222,9 @@ async function renderLesson(id) {
               <span class="spacer"></span>
               <button class="btn sm add-word" data-addword="${i}" ${findByWord(v.word) ? 'disabled' : ''}>${findByWord(v.word) ? 'In my words ✓' : '＋ My words'}</button>
             </div>
-            <div class="vm">${esc(v.meaning)}</div>
+            <div class="vm" ${trAttr()}>${esc(v.meaning)}</div>
             ${v.meaningJa ? `<div class="vj" lang="ja">${esc(v.meaningJa)}</div>` : ''}
-            ${v.note ? `<div class="vn">${esc(v.note)}</div>` : ''}
+            ${v.note ? `<div class="vn" ${trAttr()}>${esc(v.note)}</div>` : ''}
           </li>`).join('')}</ul>
       </section>
 
@@ -221,15 +232,15 @@ async function renderLesson(id) {
         <h2 class="sec-title"><span>2</span>読んでみよう <small>Read</small></h2>
         <div class="read-tools">
           <button class="btn sm" id="playAll">▶ Play all</button>
-          <button class="btn sm" id="enAll">Show all English</button>
-          <span class="muted small">Tap a line to see its English.</span>
+          <button class="btn sm" id="enAll">Show all translations</button>
+          <span class="muted small">Tap a line to see its translation.</span>
         </div>
         <div class="lines ${chat ? 'chat' : 'prose'}">${lesson.lines.map((l, i) => `
           <div class="line ${l.speaker ? 'has-sp ' + hue(l.speaker) : 'narr'}" data-line="${i}">
             ${l.speaker ? `<div class="sp">${esc(l.speaker)}</div>` : ''}
             <div class="bubble">
               <p class="jp" lang="ja">${marked(l.text)}</p>
-              <p class="en-text tr">${esc(l.en)}</p>
+              <p class="en-text tr" ${trAttr()}>${esc(l.en)}</p>
             </div>
             <button class="icon-btn line-say" data-say="${i}" aria-label="Play line">${ICON.speak}</button>
           </div>`).join('')}</div>
@@ -240,7 +251,7 @@ async function renderLesson(id) {
         <ul class="expr-list">${lesson.expressions.map((e) => `
           <li>
             <div class="ep" lang="ja">${esc(e.pattern)} <span class="muted">→ ${esc(e.standard)}</span></div>
-            <p>${esc(e.explanation)}</p>
+            <p ${trAttr()}>${esc(e.explanation)}</p>
             ${e.example ? `<p class="ex" lang="ja">${marked(e.example)}</p>` : ''}
           </li>`).join('')}</ul>
       </section>` : ''}
@@ -256,7 +267,7 @@ async function renderLesson(id) {
       <section>
         <h2 class="sec-title"><span>5</span>あなたの番 <small>Your turn</small></h2>
         <p lang="ja">${esc(lesson.yourTurn?.promptJa)}</p>
-        <p class="muted small">${esc(lesson.yourTurn?.promptEn)}</p>
+        <p class="muted small" ${trAttr()}>${esc(lesson.yourTurn?.promptEn)}</p>
         <textarea id="yourTurn" rows="3" lang="ja" placeholder="ここに書いてみよう…">${esc(yourText)}</textarea>
         <div class="btn-row" style="margin-top:8px">
           <button class="btn sm" id="sayMine">🔊 Hear mine</button>
@@ -283,7 +294,7 @@ async function renderLesson(id) {
   }));
   $('#enAll').onclick = () => {
     root.classList.toggle('en-hidden');
-    $('#enAll').textContent = root.classList.contains('en-hidden') ? 'Show all English' : 'Hide English';
+    $('#enAll').textContent = root.classList.contains('en-hidden') ? 'Show all translations' : 'Hide translations';
   };
   $('#playAll').onclick = () => (reading.playing ? stopReading() : playAll(speakers));
   $$('[data-addword]', root).forEach((b) => (b.onclick = () => addLessonWord(lesson.vocab[+b.dataset.addword], b)));

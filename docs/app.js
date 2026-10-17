@@ -18,7 +18,7 @@ const ICON = {
 
 /* ---------- settings (per device) ---------- */
 const SETTINGS_KEY = 'kotoba-settings';
-const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', english: 'show', lastSync: 0 };
+const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', english: 'show', transLang: 'en', lastSync: 0 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -85,6 +85,11 @@ function newCard(fields) {
     srs: { jp: null, en: null }, ...fields,
   };
 }
+/* Translation language (set on the server, cached here): 'en' or 'km' */
+const isKm = () => settings.transLang === 'km';
+const trAttr = () => (isKm() ? 'lang="km"' : 'lang="en"');
+const trTag = () => `<span class="en-tag">${isKm() ? 'ខ្មែរ' : 'EN'}</span>`;
+const trName = () => (isKm() ? 'ខ្មែរ' : 'English');
 const hasEnglishAI = (c) => !!(c.nuance && c.examples && c.examples.length);
 const hasAI = (c) => hasEnglishAI(c) && !!c.meaningJa;
 
@@ -124,6 +129,10 @@ function parseWordLines(text) {
     if (!/[぀-ヿ㐀-鿿]/.test(word)) continue; // skip headers like "Book Title:"
     let reading = '';
     if (parts.length && HAS_KANJI.test(word) && IS_KANA.test(parts[0])) reading = parts.shift();
+    else if (parts.length && HAS_KANJI.test(word)) {
+      const m = parts[0].match(/^([\u3040-\u30ffー]+)([^\u3040-\u30ff\u3400-\u9fff].*)$/); // e.g. かじょうexcess
+      if (m) { reading = m[1]; parts[0] = m[2]; }
+    }
     const meaning = parts.join(' ').replace(/^[.,、。]\s*/, '').trim();
     out.push({ word, reading, note: meaning, meaning });
   }
@@ -191,8 +200,9 @@ async function handleFile(file) {
   }
 }
 async function loadStarter() {
-  const res = await fetch('starter-deck.json', { cache: 'no-store' });
-  if (!res.ok) throw new Error('Could not load starter-deck.json');
+  const file = isKm() ? 'starter-deck-km.json' : 'starter-deck.json';
+  const res = await fetch(file, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Could not load ' + file);
   const data = await res.json();
   const { added, updated } = await importCards(data.cards || data);
   toast(`Starter deck: ${added} words added${updated ? `, ${updated} updated` : ''}`);
@@ -296,7 +306,16 @@ async function runEnrich(list) {
   try {
     for (let i = 0; i < list.length; i += size) {
       const batch = list.slice(i, i + size).map((c) => cards.find((x) => x.id === c.id) || c);
-      await enrichBatch(batch);
+      for (let tries = 0; ; tries++) {
+        try { await enrichBatch(batch); break; } catch (e) {
+          // Google's servers are often briefly overloaded: wait and try the same batch again
+          if (tries >= 2 || !/busy|too long|limit|stopped early|returned nothing|not valid JSON|cut off|reach the Worker/i.test(e.message)) throw e;
+          for (let s = 20; s > 0; s--) {
+            t.textContent = `✦ ${done} / ${list.length} — Gemini is busy, retrying in ${s} s…`;
+            await sleep(1000);
+          }
+        }
+      }
       done += batch.length;
       t.textContent = `✦ Filling in ${done} / ${list.length}…`;
       if (!session) render();
@@ -382,19 +401,19 @@ function detailHTML(c) {
         ${showReading ? `<div class="reading" lang="ja">${esc(c.reading)}</div>` : ''}
       </div>
       ${ja ? `<div class="sec"><h4>意味</h4><p class="ja-text" lang="ja">${esc(c.meaningJa)}</p>
-        ${c.meaning ? `<p class="en-line ${en}"><span class="en-tag">EN</span>${esc(c.meaning)}</p>` : ''}</div>`
-        : c.meaning ? `<div class="meaning">${esc(c.meaning)}</div>` : ''}
+        ${c.meaning ? `<p class="en-line ${en}" ${trAttr()}>${trTag()}${esc(c.meaning)}</p>` : ''}</div>`
+        : c.meaning ? `<div class="meaning" ${trAttr()}>${esc(c.meaning)}</div>` : ''}
       ${noteDiffers ? `<div class="note ${en}">My note: ${esc(c.note)}</div>` : ''}
       ${c.nuanceJa || c.nuance ? `<div class="sec"><h4>${ja ? 'ニュアンス・使い方' : 'Nuance'}</h4>
         ${c.nuanceJa ? `<p class="ja-text" lang="ja">${esc(c.nuanceJa)}</p>` : ''}
-        ${c.nuance ? `<p class="${c.nuanceJa ? `en-line ${en}` : ''}">${c.nuanceJa ? '<span class="en-tag">EN</span>' : ''}${esc(c.nuance)}</p>` : ''}</div>` : ''}
+        ${c.nuance ? `<p class="${c.nuanceJa ? `en-line ${en}` : ''}" ${trAttr()}>${c.nuanceJa ? trTag() : ''}${esc(c.nuance)}</p>` : ''}</div>` : ''}
       ${ex.length ? `<div class="sec"><h4>${ja ? '例文' : 'Examples'}</h4><ol class="examples">${ex.map((e) => `
         <li>
           <div class="ja-line"><p lang="ja">${highlight(e.ja, c.word)}</p>
             <button class="icon-btn" data-speak="${esc(e.ja)}" aria-label="Play example">${ICON.speak}</button></div>
-          ${e.en ? `<p class="en ${en}">${esc(e.en)}</p>` : ''}
+          ${e.en ? `<p class="en ${en}" ${trAttr()}>${esc(e.en)}</p>` : ''}
         </li>`).join('')}</ol></div>` : ''}
-      ${ja ? `<button class="link en-toggle" data-en-toggle>${hideEn ? 'Show English' : 'Hide English'}</button>` : ''}
+      ${ja ? `<button class="link en-toggle" data-en-toggle>${hideEn ? 'Show translation' : 'Hide translation'}</button>` : ''}
       ${!hasAI(c) ? `<div class="missing"><span>${hasEnglishAI(c) ? 'No Japanese explanation yet.' : 'No nuance or examples yet.'}</span>
         <button class="btn sm" data-ai="${esc(c.id)}">✦ Fill with AI</button></div>` : ''}
     </div>`;
@@ -472,10 +491,10 @@ function renderHome() {
       <p>${all.length} words · ${studiedToday} studied today</p>
     </div>
     <div class="deck-grid">
-      ${deck('jp', '日本語', 'English')}
-      ${deck('en', 'English', '日本語')}
+      ${deck('jp', '日本語', trName())}
+      ${deck('en', trName(), '日本語')}
     </div>
-    ${missing && settings.workerUrl ? `<div class="panel"><h2>${missing} words need explanations</h2><p class="muted small">AI can fill in the Japanese 意味 &amp; ニュアンス, English nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
+    ${missing && settings.workerUrl ? `<div class="panel"><h2>${missing} words need explanations</h2><p class="muted small">AI can fill in the Japanese 意味 &amp; ニュアンス, the ${isKm() ? 'Khmer' : 'English'} nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
     ${!settings.workerUrl ? `<div class="panel"><h2>Finish setup</h2><p class="muted small">Connect your free server to get daily notifications, AI examples, and sync between your phone and PC.</p><a class="btn" href="#/settings">Open settings</a></div>` : ''}
     <div class="home-foot">
       <button class="btn" id="addBtn">＋ Add word</button>
@@ -523,7 +542,7 @@ function renderSession() {
     front = `<div class="big-word" lang="ja">${esc(c.word)}</div>`;
   } else {
     const hintText = (c.reading || c.word).slice(0, s.hint);
-    front = `<div class="big-meaning">${esc(c.meaning || c.note)}</div>
+    front = `<div class="big-meaning" ${trAttr()}>${esc(c.meaning || c.note)}</div>
       <div class="hint" lang="ja">${s.hint ? esc(hintText) + '…' : ''}</div>`;
   }
   view().innerHTML = `
@@ -534,7 +553,7 @@ function renderSession() {
         <div class="session-count">${remaining} left</div>
       </div>
       <div class="flash" id="flash">
-        <span class="tag ${isNew ? 'new' : ''}">${s.mode === 'practice' ? 'Practice' : isNew ? 'New' : SRS.stateOf(c, s.dir).intro === SRS.today() ? 'Today' : 'Review'} · ${s.dir === 'jp' ? '日→英' : '英→日'}</span>
+        <span class="tag ${isNew ? 'new' : ''}">${s.mode === 'practice' ? 'Practice' : isNew ? 'New' : SRS.stateOf(c, s.dir).intro === SRS.today() ? 'Today' : 'Review'} · ${s.dir === 'jp' ? `日→${isKm() ? 'ខ្មែរ' : '英'}` : `${isKm() ? 'ខ្មែរ' : '英'}→日`}</span>
         ${s.revealed ? detailHTML(c) : `<div class="front">${front}<div class="tap-hint">Tap to show answer</div></div>`}
       </div>
       <div class="actions">
@@ -683,7 +702,7 @@ function renderSettings() {
           </select>
         </div>
         <div class="row">
-          <div class="lbl">English on the answer card<small>The Japanese 意味 and ニュアンス always come first.</small></div>
+          <div class="lbl">Translation on the answer card<small>The Japanese 意味 and ニュアンス always come first.</small></div>
           <select id="english">
             <option value="show" ${settings.english !== 'tap' ? 'selected' : ''}>Show</option>
             <option value="tap" ${settings.english === 'tap' ? 'selected' : ''}>Hide until tapped</option>
@@ -942,7 +961,7 @@ document.addEventListener('click', (e) => {
     e.stopPropagation();
     const box = et.closest('.answer');
     box.classList.toggle('en-hidden');
-    et.textContent = box.classList.contains('en-hidden') ? 'Show English' : 'Hide English';
+    et.textContent = box.classList.contains('en-hidden') ? 'Show translation' : 'Hide translation';
     return;
   }
   const ed = e.target.closest('[data-edit]');
@@ -1000,5 +1019,8 @@ document.addEventListener('visibilitychange', () => {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  if (settings.workerUrl) syncNow(true);
+  if (settings.workerUrl) {
+    syncNow(true);
+    loadLessonCfg().then(() => { if (route().name === 'home') render(); }).catch(() => {});
+  }
 })();

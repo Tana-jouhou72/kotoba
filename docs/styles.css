@@ -357,3 +357,7 @@ label small { display: inline; }
 .day { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--bg); cursor: pointer; font-family: var(--serif); }
 .day.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (max-width: 420px) { .tabbar a { font-size: .7rem; } }
+
+/* Khmer translations: Khmer font and taller lines for stacked vowels */
+[lang="km"] { font-family: "Noto Sans Khmer", var(--sans); line-height: 1.85; }
+.front .big-meaning[lang="km"] { line-height: 1.6; }
