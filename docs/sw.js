@@ -1,7 +1,7 @@
 /* Service worker: offline support + daily reminder notifications */
 importScripts('db.js', 'srs.js');
 
-const CACHE = 'kotoba-v12';
+const CACHE = 'kotoba-v14';
 const SHELL = [
   './', 'index.html', 'styles.css', 'app.js', 'read.js', 'shadow.js', 'db.js', 'srs.js', 'manifest.webmanifest', 'starter-deck.json', 'starter-deck-km.json',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/badge-96.png',
@@ -52,21 +52,22 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-async function reminderText() {
+/** The daily word reminder: its text, and the card session it opens (日→英 first, then 英→日). */
+async function reminder() {
   try {
     const cards = (await KDB.all()).filter((c) => !c.deleted);
     const perDay = (await KDB.getKV('newPerDay')) || 10;
     const jp = SRS.counts(cards, 'jp', perDay);
     const en = SRS.counts(cards, 'en', perDay);
     const total = jp.left + jp.due + en.left + en.due;
-    if (!cards.length) return 'Add some words to start studying.';
-    if (!total) return 'Nothing due today — great job! Add a few new words from your book?';
+    if (!cards.length) return { body: 'Add some words to start studying.', url: './#/' };
+    if (!total) return { body: 'Nothing due today — great job! Add a few new words from your book?', url: './#/' };
     const parts = [];
     if (jp.left + jp.due) parts.push(`日→英: ${jp.left + jp.due} cards`);
     if (en.left + en.due) parts.push(`英→日: ${en.left + en.due} cards`);
-    return parts.join(' · ');
+    return { body: parts.join(' · '), url: jp.left + jp.due ? './#/study/jp' : './#/study/en' };
   } catch {
-    return 'Time for your daily Japanese words.';
+    return { body: 'Time for your daily Japanese words.', url: './#/study/jp' };
   }
 }
 
@@ -75,14 +76,15 @@ self.addEventListener('push', (event) => {
     let data = null;
     try { data = event.data && event.data.json(); } catch { /* push without payload */ }
     const title = (data && data.title) || '言葉 — time to study';
-    const body = (data && data.body) || (await reminderText());
+    const daily = data && data.body ? null : await reminder();
+    const body = (data && data.body) || daily.body;
     await self.registration.showNotification(title, {
       body,
       icon: 'icons/icon-192.png',
       badge: 'icons/badge-96.png',
       tag: (data && data.tag) || 'kotoba-daily',
       renotify: true,
-      data: { url: (data && data.url) || './' },
+      data: { url: (data && data.url) || (daily && daily.url) || './' },
     });
   })());
 });
@@ -91,11 +93,14 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil((async () => {
     const target = new URL(event.notification.data?.url || './', self.registration.scope).href;
+    // Remember where to go. Android often freezes or reloads an app that is in the background, and then a message
+    // sent to it is lost; the app reads this note when it opens or comes back, so it still lands on the right tab.
+    try { await KDB.setKV('pendingOpen', { url: target, t: Date.now() }); } catch {}
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     for (const w of wins) {
       if (w.url.startsWith(self.registration.scope)) {
-        await w.focus();
-        w.postMessage({ type: 'open', url: target }); // the open app jumps to the lesson
+        try { await w.focus(); } catch {}
+        try { w.postMessage({ type: 'open', url: target }); } catch {}
         return;
       }
     }

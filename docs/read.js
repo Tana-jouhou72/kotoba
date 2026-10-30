@@ -382,12 +382,3 @@ async function toggleDone(lesson) {
   } catch (e) { toast(e.message, 'err'); }
 }
 
-/* Open the lesson when its notification is tapped while the app is already open */
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data && e.data.type === 'open' && e.data.url) {
-      const h = new URL(e.data.url, location.href).hash;
-      if (h) location.hash = h;
-    }
-  });
-}

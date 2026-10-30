@@ -7,6 +7,8 @@ let shadowData = null;   // last answer from GET /shadow
 let shadowCfgCache = null;
 let yt = null;           // the player on screen: { id, player, timer, lastSentPos, lastSentAt, rate }
 let ytApi = null;
+let shTx = null;         // the current video's transcript, once loaded: { id, lines:[{ t, sp, ja, tr }] }
+const AWAY_KEY = 'kotoba-shadow-away'; // set when you open the video in the YouTube app
 const POS_KEY = 'kotoba-shadow-pos';
 const SEND_EVERY_MS = 60000; // while playing, the server copy of your position is updated about once a minute
 
@@ -126,6 +128,7 @@ function tick() {
 function destroyPlayer() {
   if (!yt) return;
   clearInterval(yt.timer);
+  clearInterval(yt.loopTimer);
   try { yt.player && yt.player.destroy && yt.player.destroy(); } catch {}
   yt = null;
 }
@@ -153,6 +156,9 @@ async function mountPlayer(c) {
       onStateChange: (e) => {
         if (yt !== mine) return;
         clearInterval(mine.timer);
+        mine.playing = e.data === YTapi.PlayerState.PLAYING || e.data === YTapi.PlayerState.BUFFERING;
+        const pb = $('#shPlay');
+        if (pb) { pb.textContent = mine.playing ? '⏸' : '▶'; pb.setAttribute('aria-label', mine.playing ? 'Pause' : 'Play'); }
         if (e.data === YTapi.PlayerState.PLAYING) mine.timer = setInterval(tick, 1000);
         else if (e.data === YTapi.PlayerState.PAUSED) { tick(); sendProgress(); }
         else if (e.data === YTapi.PlayerState.ENDED) { tick(); if (!shadowData.current.finished) sendProgress({ finished: true }); }
@@ -172,8 +178,8 @@ function playerFallback(c, msg) {
   if (!box) return;
   box.classList.add('fallback');
   box.innerHTML = `<div class="sh-fallback"><p>${esc(msg)}</p>
-    <a class="btn primary" href="${esc(ytWatchUrl(c.id, resumePos(c)))}" target="_blank" rel="noopener">▶ Watch in YouTube${resumePos(c) > 5 ? ` from ${fmtTime(resumePos(c))}` : ''}</a>
-    <p class="muted small">When you finish, come back and tap “Mark as finished”.</p></div>`;
+    <a class="btn primary" data-ytopen href="${esc(ytWatchUrl(c.id, resumePos(c)))}" target="_blank" rel="noopener">▶ Watch in YouTube${resumePos(c) > 5 ? ` from ${fmtTime(resumePos(c))}` : ''}</a>
+    <p class="muted small">When you come back, Kotoba asks how far you got.</p></div>`;
   $('#shTools') && ($('#shTools').hidden = true);
 }
 
@@ -237,6 +243,7 @@ function drawShadow() {
     <div id="shadowRoot" class="shadow">
       ${head}
       <div class="read-top"><span class="muted small">${esc(shadowSchedule(r.settings))} · <a href="#/settings">change</a></span></div>
+      <div id="shReturn"></div>
       <div class="sh-head">
         <div class="lr-top"><span class="chip" id="shChip"></span><span class="muted small">${c.dur ? fmtTime(c.dur) : ''}</span></div>
         <h2 class="sh-title" lang="ja">${esc(c.title)}</h2>
@@ -244,23 +251,36 @@ function drawShadow() {
       </div>
       <div class="sh-stage">
         <div class="sh-player"><div id="ytPlayer"></div></div>
-        <div class="sh-tools" id="shTools">
-          <button class="btn sm" id="shBack" title="Back 5 seconds">↺ 5s</button>
-          <span class="seg" role="group" aria-label="Speed">
-            <button class="btn sm" data-rate="0.75">0.75×</button><button class="btn sm on" data-rate="1">1×</button>
-          </span>
-          <span class="spacer"></span>
-          <span class="muted small sh-time" id="shTime">${fmtTime(pos)} / ${fmtTime(c.dur)}</span>
+        <div id="shTools">
+          <div class="sh-ctrl">
+            <button class="ctrl play" id="shPlay" aria-label="Play">▶</button>
+            <button class="ctrl" id="shBack" aria-label="Back 5 seconds">↺ 5s</button>
+            <button class="ctrl loop" id="shLoop">🔁 Repeat sentence</button>
+          </div>
+          <div class="sh-sub">
+            <span class="seg" role="group" aria-label="Speed">${[0.5, 0.75, 1].map((r) => `<button class="btn sm ${r === 1 ? 'on' : ''}" data-rate="${r}">${r}×</button>`).join('')}</span>
+            <span class="spacer"></span>
+            <span class="muted small sh-time" id="shTime">${fmtTime(pos)} / ${fmtTime(c.dur)}</span>
+          </div>
+          <div class="sh-bar"><span id="shBar" style="width:${c.dur ? Math.min(100, (pos / c.dur) * 100) : 0}%"></span></div>
+          <div class="sh-loop" id="shLoopInfo" hidden>
+            <div class="sh-loop-top">
+              <span class="chip">🔁 Repeating</span><span class="spacer"></span>
+              <button class="btn sm" id="loopPrev" aria-label="Previous sentence">◀</button>
+              <button class="btn sm" id="loopNext" aria-label="Next sentence">▶</button>
+              <button class="btn sm" id="loopStop">■ Stop</button>
+            </div>
+            <p class="jp" lang="ja" id="shLoopText"></p>
+          </div>
         </div>
-        <div class="sh-bar"><span id="shBar" style="width:${c.dur ? Math.min(100, (pos / c.dur) * 100) : 0}%"></span></div>
       </div>
       <div class="sh-status" id="shStatus"></div>
       <div class="btn-row">
         <button class="btn" id="shTxBtn">文字 Show transcript</button>
+        <a class="btn" data-ytopen href="${esc(ytWatchUrl(c.id, pos))}" target="_blank" rel="noopener">▶ YouTube app</a>
         <button class="btn" id="shFinish"></button>
       </div>
       <div class="sh-links">
-        <a class="link" id="shOpenYT" href="${esc(ytWatchUrl(c.id, pos))}" target="_blank" rel="noopener">Open in YouTube</a>
         <button class="link" id="shSkip">Skip this video</button>
       </div>
       <section id="txBox" class="tx en-hidden" hidden></section>
@@ -269,7 +289,12 @@ function drawShadow() {
 
   drawShadowStatus();
   drawShadowHistory();
-  $('#shBack').onclick = () => { if (yt && yt.player && yt.player.seekTo) yt.player.seekTo(Math.max(0, playerPos() - 5), true); };
+  $('#shPlay').onclick = playPause;
+  $('#shBack').onclick = back5;
+  $('#shLoop').onclick = () => (yt && yt.loop ? stopLoop() : loopHere());
+  $('#loopPrev').onclick = () => yt && yt.loop && startLoop(yt.loop.i - 1);
+  $('#loopNext').onclick = () => yt && yt.loop && startLoop(yt.loop.i + 1);
+  $('#loopStop').onclick = stopLoop;
   $$('[data-rate]').forEach((b) => (b.onclick = () => {
     if (!yt || !yt.player || !yt.player.setPlaybackRate) return;
     yt.player.setPlaybackRate(+b.dataset.rate);
@@ -277,11 +302,11 @@ function drawShadow() {
   }));
   $('#shTxBtn').onclick = toggleTranscript;
   $('#shFinish').onclick = toggleFinished;
-  $('#shOpenYT').onclick = () => { $('#shOpenYT').href = ytWatchUrl(c.id, yt && yt.player ? playerPos() : resumePos(c)); if (yt && yt.player && yt.player.pauseVideo) yt.player.pauseVideo(); };
   $('#shSkip').onclick = skipVideo;
   window.scrollTo(0, 0);
   if (c.embed === false) playerFallback(c, 'This video can\'t play inside the app (its owner turned that off).');
   else mountPlayer(c);
+  checkReturn();
 }
 
 function drawShadowStatus() {
@@ -361,6 +386,177 @@ async function skipVideo() {
   }
 }
 
+/* ---------- controls ---------- */
+function playPause() {
+  if (!yt || !yt.player || !yt.player.playVideo) return;
+  if (yt.playing) yt.player.pauseVideo(); else yt.player.playVideo();
+}
+function back5() {
+  if (!yt || !yt.player || !yt.player.seekTo) return;
+  if (yt.loop) stopLoop();
+  yt.player.seekTo(Math.max(0, playerPos() - 5), true);
+}
+
+/* ---------- repeat one sentence (uses the transcript's start times) ---------- */
+function timedLines() {
+  return shTx && shadowData && shTx.id === shadowData.current.id ? shTx.lines : null;
+}
+function loopRange(i) {
+  const L = timedLines();
+  const l = L[i];
+  const next = L.slice(i + 1).find((x) => x.t != null && x.t > l.t);
+  // the AI's times are rounded to whole seconds, so leave a little room on both sides
+  const start = Math.max(0, l.t - 0.4);
+  const end = next ? next.t + 0.4 : l.t + Math.max(3, l.ja.length * 0.2);
+  return { start, end };
+}
+/** The sentence you just heard: the one playing a moment ago. */
+function lineAt(t) {
+  const L = timedLines();
+  let found = -1;
+  L.forEach((l, i) => { if (l.t != null && l.t <= t) found = i; });
+  if (found < 0) found = L.findIndex((l) => l.t != null);
+  return found;
+}
+async function ensureTranscript() {
+  const id = shadowData.current.id;
+  if (timedLines()) return true;
+  let t = null;
+  try { t = await KDB.getKV('tx:' + id); } catch {}
+  if (!t) {
+    if (!confirm('Repeating a sentence uses the transcript to find where each sentence starts. Make the transcript now? (about 1 min, only once per video)')) return false;
+    t = await fetchTranscript(id, false);
+  }
+  if (!t || shadowData.current.id !== id) return false;
+  shTx = t;
+  return true;
+}
+async function loopHere() {
+  if (!yt || !yt.player || !yt.player.seekTo) return;
+  const now = playerPos();
+  if (!(await ensureTranscript())) return;
+  startLoop(lineAt(Math.max(0, now - 1)));
+}
+function startLoop(i) {
+  const L = timedLines();
+  if (!L || !yt || !yt.player) return;
+  // skip lines without a time
+  while (i >= 0 && i < L.length && L[i].t == null) i += i > (yt.loop ? yt.loop.i : -1) ? 1 : -1;
+  if (i < 0 || i >= L.length) return;
+  clearInterval(yt.loopTimer);
+  yt.loop = { i, ...loopRange(i), since: Date.now() };
+  yt.player.seekTo(yt.loop.start, true);
+  yt.player.playVideo();
+  yt.loopTimer = setInterval(checkLoop, 150);
+  $('#shLoopInfo').hidden = false;
+  $('#shLoopText').textContent = L[i].ja;
+  $('#loopPrev').disabled = !L.slice(0, i).some((l) => l.t != null);
+  $('#loopNext').disabled = !L.slice(i + 1).some((l) => l.t != null);
+  $('#shLoop').textContent = '■ Stop repeat';
+  $('#shLoop').classList.add('on');
+  markLoopLine(i);
+}
+function checkLoop() {
+  const lp = yt && yt.loop;
+  if (!lp) return;
+  const p = playerPos();
+  if (Date.now() - lp.since > 1500 && (p < lp.start - 2 || p > lp.end + 3)) return stopLoop(); // you jumped somewhere else
+  if (p >= lp.end) { lp.since = Date.now(); yt.player.seekTo(lp.start, true); }
+}
+function stopLoop() {
+  if (!yt || !yt.loop) return;
+  clearInterval(yt.loopTimer);
+  yt.loop = null;
+  if ($('#shLoopInfo')) $('#shLoopInfo').hidden = true;
+  const b = $('#shLoop');
+  if (b) { b.textContent = '🔁 Repeat sentence'; b.classList.remove('on'); }
+  markLoopLine(-1);
+}
+function markLoopLine(i) {
+  $$('.tx-line.looping').forEach((el) => el.classList.remove('looping'));
+  if (i >= 0) { const el = $(`.tx-line[data-i="${i}"]`); if (el) el.classList.add('looping'); }
+}
+
+/* ---------- watching in the YouTube app, then coming back ---------- */
+function readAway() {
+  try { return JSON.parse(localStorage.getItem(AWAY_KEY) || 'null'); } catch { return null; }
+}
+function clearAway() {
+  try { localStorage.removeItem(AWAY_KEY); } catch {}
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-ytopen]');
+  if (!a || !shadowData || !shadowData.current) return;
+  const c = shadowData.current;
+  const pos = yt && yt.player && yt.player.getCurrentTime ? playerPos() : resumePos(c);
+  a.href = ytWatchUrl(c.id, pos);
+  stopLoop();
+  if (yt && yt.player && yt.player.pauseVideo) yt.player.pauseVideo();
+  try { localStorage.setItem(AWAY_KEY, JSON.stringify({ id: c.id, pos, t: Date.now() })); } catch {}
+}, true);
+
+/** Back from the YouTube app: ask how far you got, so tomorrow continues from there. */
+function checkReturn() {
+  const a = readAway();
+  const c = shadowData && shadowData.current;
+  if (!a || !c || !$('#shadowRoot') || $('#shReturnBox')) return;
+  if (a.id !== c.id) return clearAway(); // that video is no longer today's
+  if (Date.now() - a.t < 20000) return clearAway(); // came straight back without watching
+  const m = Math.floor(a.pos / 60), sec = Math.floor(a.pos % 60);
+  $('#shReturn').innerHTML = `
+    <div class="panel sh-return" id="shReturnBox">
+      <h2>Welcome back 👋</h2>
+      <p class="muted small">How far did you get in the YouTube app? Kotoba will continue from there.</p>
+      <div class="btn-row"><button class="btn primary" id="rtDone">✓ I finished it</button></div>
+      <div class="rt-time">
+        <span>I stopped at</span>
+        <input id="rtMin" type="number" inputmode="numeric" min="0" value="${m}" aria-label="Minutes" />
+        <span>:</span>
+        <input id="rtSec" type="number" inputmode="numeric" min="0" max="59" value="${String(sec).padStart(2, '0')}" aria-label="Seconds" />
+        <button class="btn" id="rtSave">Save</button>
+      </div>
+      <button class="link" id="rtClose">I didn't watch — close</button>
+    </div>`;
+  window.scrollTo(0, 0);
+  const close = () => { clearAway(); $('#shReturn').innerHTML = ''; };
+  $('#rtClose').onclick = close;
+  $('#rtDone').onclick = async () => {
+    try {
+      const r = await api('/shadow/progress', { id: c.id, pos: c.dur || a.pos, tz: tzName(), finished: true });
+      if (r.current) shadowData.current = r.current;
+      close();
+      drawShadowStatus();
+      refreshShadowHistory();
+      toast('お疲れさま！ Finished ✓ — a new video comes tomorrow');
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#rtSave').onclick = async () => {
+    const pos = Math.max(0, (+$('#rtMin').value || 0) * 60 + Math.min(59, +$('#rtSec').value || 0));
+    if (c.dur && pos > c.dur) return toast(`The video is only ${fmtTime(c.dur)} long.`, 'err');
+    try {
+      const r = await api('/shadow/progress', { id: c.id, pos, tz: tzName() });
+      if (r.current) shadowData.current = r.current;
+      saveLocalPos(c.id, pos);
+      if (yt) { yt.lastSentPos = pos; yt.lastSentAt = Date.now(); }
+      if (yt && yt.player && yt.player.cueVideoById) yt.player.cueVideoById({ videoId: c.id, startSeconds: Math.max(0, pos - 3) });
+      if ($('#shTime')) $('#shTime').textContent = `${fmtTime(pos)} / ${fmtTime(c.dur)}`;
+      if ($('#shBar') && c.dur) $('#shBar').style.width = Math.min(100, (pos / c.dur) * 100) + '%';
+      close();
+      drawShadowStatus();
+      toast(`Saved — continues from ${fmtTime(pos)}`);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+
+/* PC keyboard: Space = play/pause, ← = back 5s, R = repeat sentence */
+document.addEventListener('keydown', (e) => {
+  if (route().name !== 'shadow' || !yt || !yt.player) return;
+  if ($('dialog[open]') || /input|textarea|select/i.test(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === ' ' || e.key.toLowerCase() === 'k') { e.preventDefault(); playPause(); }
+  else if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'j') { e.preventDefault(); back5(); }
+  else if (e.key.toLowerCase() === 'r') { e.preventDefault(); yt.loop ? stopLoop() : loopHere(); }
+});
+
 /* ---------- transcript ---------- */
 async function toggleTranscript() {
   const box = $('#txBox');
@@ -376,6 +572,7 @@ async function toggleTranscript() {
   try { t = await KDB.getKV('tx:' + id); } catch {}
   if (!t) t = await fetchTranscript(id, false);
   if (!t || !$('#txBox') || shadowData.current.id !== id) return;
+  shTx = t;
   drawTranscript(t);
 }
 
@@ -401,7 +598,7 @@ function drawTranscript(t) {
   box.innerHTML = `
     <div class="read-tools">
       <button class="btn sm" id="txEn">Show all translations</button>
-      <span class="muted small">Tap a time to jump there. Tap a line for its translation.</span>
+      <span class="muted small">Tap a time to jump there, 🔁 to repeat a sentence, or a line for its translation.</span>
     </div>
     <div class="tx-lines">${t.lines.map((l, i) => `
       <div class="tx-line" data-i="${i}">
@@ -410,15 +607,20 @@ function drawTranscript(t) {
           <p class="jp" lang="ja">${multi && l.sp ? `<span class="tx-sp">${esc(l.sp)}</span>` : ''}${esc(l.ja)}</p>
           <p class="en-text tr" ${trAttr()}>${esc(l.tr)}</p>
         </div>
+        ${l.t != null ? `<button class="tx-rep" data-rep="${i}" aria-label="Repeat this sentence">🔁</button>` : '<span></span>'}
       </div>`).join('')}</div>
     <p class="muted small tx-note">Written by AI from the audio, so it can have small mistakes. For YouTube's own captions (when the video has them), use the CC button in the player. <button class="link" id="txRedo">Rewrite it</button></p>`;
   box.hidden = false;
   $('#shadowRoot').classList.add('tx-open');
   $('#shTxBtn').textContent = '文字 Hide transcript';
+  shTx = t;
+  if (yt && yt.loop) markLoopLine(yt.loop.i);
   $$('.tx-line', box).forEach((el) => (el.onclick = (e) => {
+    const rb = e.target.closest('[data-rep]');
+    if (rb) { startLoop(+rb.dataset.rep); return; }
     const tb = e.target.closest('[data-t]');
     if (tb) {
-      if (yt && yt.player && yt.player.seekTo) { yt.player.seekTo(+tb.dataset.t, true); yt.player.playVideo(); }
+      if (yt && yt.player && yt.player.seekTo) { stopLoop(); yt.player.seekTo(+tb.dataset.t, true); yt.player.playVideo(); }
       return;
     }
     el.classList.toggle('show-en');
@@ -431,7 +633,7 @@ function drawTranscript(t) {
     if (!confirm('Ask the AI to write the transcript again? (Uses some of your free Gemini quota.)')) return;
     const id = shadowData.current.id;
     const fresh = await fetchTranscript(id, true);
-    if (fresh && $('#txBox') && shadowData.current.id === id) drawTranscript(fresh);
+    if (fresh && $('#txBox') && shadowData.current.id === id) { stopLoop(); drawTranscript(fresh); }
   };
 }
 
@@ -500,6 +702,7 @@ function renderShadowSettings(box) {
 
 /* Save your place when the app goes to the background or closes */
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && route().name === 'shadow') setTimeout(checkReturn, 300);
   if (document.visibilityState === 'hidden' && yt && yt.player) {
     try { yt.player.pauseVideo && yt.player.pauseVideo(); } catch {}
     sendProgress({ beacon: true });

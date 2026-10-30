@@ -1093,12 +1093,35 @@ $('#fileInput').onchange = async (e) => {
 };
 window.addEventListener('hashchange', render);
 window.addEventListener('online', () => scheduleSync(1000));
-document.addEventListener('visibilitychange', () => {
+document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible') {
     scheduleSync(500);
+    if (await applyPendingOpen()) return; // the hash change renders the right tab
     if (!session) render();
   }
 });
+
+/* ---------- opening the right tab from a notification ---------- */
+/** The service worker leaves a note with the page a tapped notification should open (see sw.js). */
+async function applyPendingOpen() {
+  let p = null;
+  try { p = await KDB.getKV('pendingOpen'); } catch { return false; }
+  if (!p) return false;
+  try { await KDB.setKV('pendingOpen', null); } catch {}
+  if (Date.now() - p.t > 10 * 60000) return false; // an old tap: ignore
+  const h = new URL(p.url, location.href).hash || '#/';
+  if (location.hash !== h) { location.hash = h; return true; }
+  return false;
+}
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'open' && e.data.url) {
+      try { KDB.setKV('pendingOpen', null); } catch {}
+      const h = new URL(e.data.url, location.href).hash;
+      if (h && location.hash !== h) location.hash = h;
+    }
+  });
+}
 
 /* ---------- boot ---------- */
 (async function boot() {
@@ -1108,7 +1131,7 @@ document.addEventListener('visibilitychange', () => {
   try { await reload(); await dedupeWords(); await addJapaneseFromStarter(); } catch (e) { toast('Could not open local storage: ' + e.message, 'err'); }
   KDB.setKV('newPerDay', settings.newPerDay).catch(() => {});
   setSyncState(settings.workerUrl ? (settings.lastSync ? 'ok' : 'off') : 'off');
-  render();
+  if (!(await applyPendingOpen())) render();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
   }
