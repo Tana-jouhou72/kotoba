@@ -358,6 +358,54 @@ label small { display: inline; }
 .day.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 @media (max-width: 420px) { .tabbar a { font-size: .7rem; } }
 
+/* ---------- 話す: shadowing ---------- */
+.sh-head { display: grid; gap: 2px; margin-bottom: 10px; }
+.sh-title { font-family: var(--serif); font-size: 1.2rem; line-height: 1.45; margin: 4px 0 0; }
+.chip.cont { color: var(--hard); border-color: color-mix(in srgb, var(--hard) 40%, transparent); }
+.chip.done { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.sh-stage { background: var(--bg); padding-bottom: 6px; }
+.shadow.tx-open .sh-stage { position: sticky; top: calc(52px + env(safe-area-inset-top)); z-index: 5; }
+.sh-player { position: relative; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: #000; }
+.sh-player iframe, .sh-player > div { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.sh-player.fallback { aspect-ratio: auto; background: var(--surface); border: 1px solid var(--line); }
+.sh-player.fallback > div { position: static; }
+.sh-fallback { display: grid; gap: 10px; justify-items: start; padding: 18px; }
+.sh-fallback p { margin: 0; }
+.sh-tools { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.seg { display: inline-flex; gap: 4px; }
+.seg .btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.sh-time { font-variant-numeric: tabular-nums; }
+.sh-bar { height: 4px; background: var(--surface-2); border-radius: 99px; overflow: hidden; margin-top: 6px; }
+.sh-bar span { display: block; height: 100%; background: var(--accent); transition: width .5s linear; }
+.sh-status { color: var(--muted); font-size: .9rem; margin: 10px 0; }
+.sh-links { display: flex; gap: 10px; margin: 4px 0 6px -6px; }
+.tx { margin-top: 14px; }
+.tx-lines { display: grid; gap: 2px; }
+.tx-line { display: grid; grid-template-columns: 52px 1fr; gap: 8px; align-items: baseline; padding: 6px 4px; border-radius: 10px; cursor: pointer; }
+.tx-line:hover { background: var(--surface); }
+.tx-line .jp { margin: 0; font-size: 1.05rem; line-height: 1.7; }
+.tx-line .tr { margin: 2px 0 0; color: var(--muted); font-size: .88rem; }
+.tx.en-hidden .tx-line:not(.show-en) .en-text { display: none; }
+.tx-t { background: none; border: 0; padding: 2px 0; color: var(--accent); font-variant-numeric: tabular-nums; font-size: .85rem; cursor: pointer; text-align: left; }
+.tx-sp { font-size: .75rem; font-weight: 700; color: var(--muted); margin-right: 6px; }
+.tx-note { margin-top: 12px; }
+.sh-progress h2 { margin-bottom: 4px; }
+.sh-hist { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.sh-hist li { display: grid; grid-template-columns: auto 1fr; gap: 0 8px; }
+.sh-hist .done-mark { margin: 0; grid-row: span 2; }
+.sh-hist .t { font-size: .95rem; }
+
 /* Khmer translations: Khmer font and taller lines for stacked vowels */
 [lang="km"] { font-family: "Noto Sans Khmer", var(--sans); line-height: 1.85; }
 .front .big-meaning[lang="km"] { line-height: 1.6; }
+
+/* word counts + "Add 50 words" */
+.words-panel { display: grid; gap: 12px; }
+.wstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+.wstat { background: var(--surface-2); border-radius: 12px; padding: 10px 4px; }
+.wstat b { display: block; font-size: 1.6rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.wstat span { font-size: .78rem; color: var(--muted); }
+.wstat.learned b { color: var(--good); }
+.wstat.unlearned b { color: var(--easy); }
+.wleft { text-align: center; margin-top: -4px; }
+.words-panel + .list-meta { margin-top: 12px; }

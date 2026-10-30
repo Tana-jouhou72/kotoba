@@ -18,7 +18,7 @@ const ICON = {
 
 /* ---------- settings (per device) ---------- */
 const SETTINGS_KEY = 'kotoba-settings';
-const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', english: 'show', transLang: 'en', lastSync: 0 };
+const DEFAULTS = { workerUrl: '', password: '', newPerDay: 10, notifyTime: '20:00', pushOn: false, theme: 'auto', english: 'show', transLang: 'en', autoLevel: 'off', lastSync: 0 };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') }; }
   catch { return { ...DEFAULTS }; }
@@ -76,6 +76,83 @@ async function dedupeWords() {
   }
   if (changed.length) await saveCards(changed);
   return changed.length;
+}
+/* ---------- built-in JLPT word lists: "+ Add 50 words" button ----------
+   Adds the next 50 words from the chosen list, in a fixed shuffled order (same on every device), with
+   fixed ids (jlpt-<level>-<index>) so two devices never create duplicates. Words already in the deck,
+   or deleted before, are skipped. The AI then fills in the new words. */
+const AUTO_COUNTS = { N5: 710, N4: 666, N3: 2103, N2: 1898, N1: 2685 };
+const ADD_BATCH = 50;
+const listCache = {};
+let addingWords = false;
+
+async function loadList(lvl) {
+  if (!listCache[lvl]) {
+    const res = await fetch(`lists/${lvl.toLowerCase()}.json`);
+    if (!res.ok) throw new Error(`Could not load the ${lvl} word list.`);
+    listCache[lvl] = (await res.json()).words;
+  }
+  return listCache[lvl];
+}
+function listLeft(lvl) {
+  const list = listCache[lvl];
+  if (!list) return null;
+  const known = new Set(cards.map((c) => c.word));
+  return list.filter(([w]) => !known.has(w)).length;
+}
+async function addListWords(n = ADD_BATCH) {
+  const lvl = settings.autoLevel;
+  if (!lvl || lvl === 'off' || addingWords) return 0;
+  addingWords = true;
+  try {
+    const list = await loadList(lvl);
+    const known = new Set(cards.map((c) => c.word)); // includes deleted words
+    const add = [];
+    let order = nextOrder();
+    for (let i = 0; i < list.length && add.length < n; i++) {
+      const [word, reading, meaning] = list[i];
+      if (known.has(word)) continue;
+      add.push(newCard({ id: `jlpt-${lvl}-${i}`, word, reading, meaning, note: '', order: order++, source: lvl, updatedAt: 1 }));
+    }
+    if (!add.length) { toast(`You already have every word from the JLPT ${lvl} list.`); return 0; }
+    await saveCards(add);
+    toast(`Added ${add.length} words from the JLPT ${lvl} list`);
+    if (!session) render();
+    if (settings.workerUrl) runEnrich(add); // fill them in with AI (8 words per request)
+    return add.length;
+  } catch (e) {
+    toast(e.message, 'err');
+    return 0;
+  } finally {
+    addingWords = false;
+  }
+}
+/* If an earlier AI fill was interrupted, finish the next two days' words quietly. */
+function fillUpcoming() {
+  if (!settings.workerUrl || enriching) return;
+  const soon = live().filter((c) => !SRS.stateOf(c, 'jp')).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    .slice(0, perDay() * 2).filter((c) => !hasAI(c));
+  if (soon.length) runEnrich(soon);
+}
+function wordStats() {
+  const all = live();
+  const learned = all.filter((c) => c.srs && (c.srs.jp || c.srs.en)).length;
+  return { total: all.length, learned, unlearned: all.length - learned };
+}
+function wordStatsHTML() {
+  const s = wordStats();
+  const lvl = settings.autoLevel && settings.autoLevel !== 'off' ? settings.autoLevel : '';
+  const left = lvl ? listLeft(lvl) : null;
+  return `
+    <div class="panel words-panel">
+      <div class="wstats">
+        <div class="wstat learned"><b>${s.learned}</b><span>Learned</span></div>
+        <div class="wstat unlearned"><b>${s.unlearned}</b><span>Not learned yet</span></div>
+        <div class="wstat"><b>${s.total}</b><span>Total</span></div>
+      </div>
+      ${lvl ? `<button class="btn primary block" data-add-list ${addingWords ? 'disabled' : ''}>＋ Add ${ADD_BATCH} words from JLPT ${lvl}</button>
+        <div class="muted small wleft">${left === null ? '' : left ? `${left} words left in the ${lvl} list` : `All ${lvl} words added ✓`}</div>` : ''}
+    </div>`;
 }
 function nextOrder() { return cards.reduce((m, c) => Math.max(m, c.order ?? 0), 0) + 1; }
 function newCard(fields) {
@@ -365,7 +442,7 @@ function toast(msg, kind = '', ms = 3200) {
 function highlight(sentence, word) {
   const s = esc(sentence);
   const candidates = [];
-  for (const part of String(word || '').split(/[、,/]/)) {
+  for (const part of String(word || '').split(/[、,/・]/)) {
     const w = part.trim().replace(/^[ー〜~]/, '');
     if (!w) continue;
     candidates.push(w);
@@ -380,7 +457,7 @@ function highlight(sentence, word) {
   }
   return s;
 }
-function speakText(c) { return c.word.replace(/^[ー〜~]/, '').split(/[、,]/)[0]; }
+function speakText(c) { return c.word.replace(/^[ー〜～~]/, '').replace(/\([^)]*\)/g, '').split(/[、,・]/)[0]; }
 
 function detailHTML(c) {
   const showReading = c.reading && c.reading !== c.word;
@@ -435,7 +512,9 @@ function render() {
   $$('.tabbar a').forEach((a) => a.classList.toggle('active', a.dataset.tab === (r.name === 'study' ? 'home' : r.name)));
   if (r.name !== 'study' && session) endSession(false);
   if (r.name !== 'read' && typeof stopReading === 'function') stopReading();
+  if (r.name !== 'shadow' && typeof leaveShadow === 'function') leaveShadow();
   if (r.name === 'read') return renderRead(r.arg);
+  if (r.name === 'shadow') return renderShadow();
   if (r.name === 'words') return renderWords();
   if (r.name === 'settings') return renderSettings();
   if (r.name === 'study') return startOrRenderSession(r.arg === 'en' ? 'en' : 'jp');
@@ -452,7 +531,8 @@ function renderHome() {
         <h2>No words yet</h2>
         <p class="muted">Load the starter deck made from your word list, or add your own.</p>
         <div class="btn-row" style="justify-content:center">
-          <button class="btn primary" id="starterBtn">Load starter deck</button>
+          ${settings.autoLevel && settings.autoLevel !== 'off' ? `<button class="btn primary" data-add-list>＋ Add ${ADD_BATCH} words from JLPT ${settings.autoLevel}</button>` : ''}
+          <button class="btn ${settings.autoLevel && settings.autoLevel !== 'off' ? '' : 'primary'}" id="starterBtn">Load starter deck</button>
           <button class="btn" id="bulkBtn">Paste words</button>
           <button class="btn ghost" id="importBtn">Import file</button>
         </div>
@@ -494,7 +574,8 @@ function renderHome() {
       ${deck('jp', '日本語', trName())}
       ${deck('en', trName(), '日本語')}
     </div>
-    ${missing && settings.workerUrl ? `<div class="panel"><h2>${missing} words need explanations</h2><p class="muted small">AI can fill in the Japanese 意味 &amp; ニュアンス, the ${isKm() ? 'Khmer' : 'English'} nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
+    ${wordStatsHTML()}
+    ${missing && settings.workerUrl && !enriching ? `<div class="panel"><h2>${missing} words need explanations</h2><p class="muted small">AI can fill in the Japanese 意味 &amp; ニュアンス, the ${isKm() ? 'Khmer' : 'English'} nuance and two example sentences.</p><button class="btn" id="fillAll">✦ Fill in with AI</button></div>` : ''}
     ${!settings.workerUrl ? `<div class="panel"><h2>Finish setup</h2><p class="muted small">Connect your free server to get daily notifications, AI examples, and sync between your phone and PC.</p><a class="btn" href="#/settings">Open settings</a></div>` : ''}
     <div class="home-foot">
       <button class="btn" id="addBtn">＋ Add word</button>
@@ -653,6 +734,7 @@ function renderWords() {
       <button class="btn primary" id="addBtn">＋ Add</button>
       <button class="btn" id="bulkBtn">Paste many</button>
     </div>
+    ${q ? '' : wordStatsHTML()}
     <div class="list-meta">
       <span>${list.length} of ${all.length} words · newest first</span>
       ${missing.length ? `<button class="btn sm" id="fillAll" ${settings.workerUrl ? '' : 'disabled title="Set up the server first"'}>✦ Fill ${missing.length} with AI</button>` : ''}
@@ -739,8 +821,11 @@ function renderSettings() {
         </div>` : `<div class="stack"><span class="muted small">This browser doesn't support push notifications. Use Chrome or Edge, and install the app to your home screen.</span></div>`}
       </div>
 
-      <h2>Daily reading lesson</h2>
+      <h2>Level, words &amp; daily lesson</h2>
       <div class="card-group" id="lessonSettings"></div>
+
+      <h2>Shadowing (YouTube)</h2>
+      <div class="card-group" id="shadowSettings"></div>
 
       <h2>Data &amp; backup</h2>
       <div class="card-group">
@@ -785,6 +870,7 @@ function renderSettings() {
   const test = $('#pushTest');
   if (test) test.onclick = async () => { try { await testPush(); toast('Test sent — it should arrive in a few seconds'); } catch (e) { toast(e.message, 'err'); } };
   renderLessonSettings($('#lessonSettings'));
+  if (typeof renderShadowSettings === 'function') renderShadowSettings($('#shadowSettings'));
   $('#exportBtn').onclick = exportBackup;
   $('#importBtn').onclick = () => $('#fileInput').click();
   $('#starterBtn').onclick = () => loadStarter().catch((e) => toast(e.message, 'err'));
@@ -956,6 +1042,14 @@ function initBulk() {
 document.addEventListener('click', (e) => {
   const sp = e.target.closest('[data-speak]');
   if (sp) { e.stopPropagation(); speak(sp.dataset.speak); return; }
+  const al = e.target.closest('[data-add-list]');
+  if (al) {
+    e.stopPropagation();
+    al.disabled = true;
+    al.innerHTML = '<span class="spinner"></span> Adding…';
+    addListWords().then(() => { if (!session) render(); });
+    return;
+  }
   const et = e.target.closest('[data-en-toggle]');
   if (et) {
     e.stopPropagation();
@@ -1020,7 +1114,11 @@ document.addEventListener('visibilitychange', () => {
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if (settings.workerUrl) {
-    syncNow(true);
-    loadLessonCfg().then(() => { if (route().name === 'home') render(); }).catch(() => {});
+    syncNow(true)
+      .then(() => loadLessonCfg().catch(() => {}))
+      .then(() => { fillUpcoming(); if (route().name === 'home') render(); });
+  }
+  if (settings.autoLevel && settings.autoLevel !== 'off') {
+    loadList(settings.autoLevel).then(() => { if (['home', 'words'].includes(route().name) && !session) render(); }).catch(() => {});
   }
 })();
